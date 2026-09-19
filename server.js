@@ -15,8 +15,12 @@ app.get('/api/health', (req, res) => {
 
 /**
  * 拼版计算接口。
- * 请求体：{ totalPages, sheetsPerSignature, binding: 'left'|'right', flip: 'long'|'short' }
- * 响应：拼版清单 JSON（与前端「导出拼版清单 JSON」内容一致）
+ * 请求体：{
+ *   totalPages, sheetsPerSignature, binding: 'left'|'right', flip: 'long'|'short',
+ *   paperThicknessMm?, maxCompensationMm?   // 爬移补偿可选参数（mm，缺省/为 0 即关闭）
+ * }
+ * 响应：拼版清单 JSON（与前端「导出拼版清单 JSON」内容一致），
+ *       每个页位带 offsetMm（横向爬移偏移，左正右负、右装订反转；空白页同样保留）。
  */
 app.post('/api/impose', (req, res) => {
   try {

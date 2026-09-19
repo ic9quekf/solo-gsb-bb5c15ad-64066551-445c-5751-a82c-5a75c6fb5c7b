@@ -10,8 +10,9 @@
   <header>
     <h1>骑马钉小册子拼版预演</h1>
     <p>
-      输入成品页数、每帖张数、装订方向与双面翻转方式，系统自动补空白页、按帖拆分页码，
-      生成每张纸正反面的左右页位；背面依据长边 / 短边翻转执行坐标变换，保证裁切折叠后的阅读顺序。
+      输入成品页数、每帖张数、装订方向、双面翻转方式与纸张厚度，系统自动补空白页、按帖拆分页码，
+      生成每张纸正反面的左右页位；背面依据长边 / 短边翻转执行坐标变换，保证裁切折叠后的阅读顺序；
+      同时按纸张厚度计算爬移补偿（creep），给出每个页位向订口方向的横向偏移。
     </p>
   </header>
 
@@ -39,11 +40,22 @@
           <option value="long">长边翻转（内容旋转 180°）</option>
         </select>
       </div>
+      <div class="field">
+        <label for="paperThicknessMm">纸张厚度 (mm)</label>
+        <input id="paperThicknessMm" type="number" min="0" max="10" step="0.01" value="0.10">
+      </div>
+      <div class="field">
+        <label for="maxCompensationMm">最大补偿量 (mm)</label>
+        <input id="maxCompensationMm" type="number" min="0" max="100" step="0.1" value="2.0">
+      </div>
       <div class="field actions">
         <button type="submit">生成拼版</button>
       </div>
     </form>
-    <p class="hint">每帖页数 = 每帖张数 × 4；总页数不足整帖时，自动在末尾补空白页。</p>
+    <p class="hint">
+      每帖页数 = 每帖张数 × 4；总页数不足整帖时，自动在末尾补空白页。
+      纸张厚度与最大补偿量任一为 0（或留空）即关闭爬移补偿，偏移全部归零。
+    </p>
     <p class="error" id="errorBox" hidden></p>
   </section>
 
@@ -62,7 +74,12 @@
     <div class="table-wrap">
       <table id="sheetTable">
         <thead>
-          <tr><th>帖</th><th>张</th><th>面</th><th>左页位</th><th>右页位</th><th>备注</th></tr>
+          <tr>
+            <th>帖</th><th>张</th><th>面</th>
+            <th>左页位</th><th>左偏移(mm)</th>
+            <th>右页位</th><th>右偏移(mm)</th>
+            <th>备注</th>
+          </tr>
         </thead>
         <tbody></tbody>
       </table>

@@ -134,6 +134,11 @@ button.ghost:disabled {
   color: #b35900;
 }
 
+.summary .chip.creep {
+  background: #fff0e6;
+  color: #d9480f;
+}
+
 .toolbar {
   display: flex;
   gap: 10px;
@@ -190,6 +195,24 @@ th {
 td.blank {
   color: #9aa5b8;
   background: #fafbfc;
+}
+
+td.offset {
+  color: #9aa5b8;
+  font-variant-numeric: tabular-nums;
+}
+
+td.offset.active {
+  color: #d9480f;
+  font-weight: 600;
+}
+
+td.note {
+  color: #8a5a2b;
+  font-size: 12.5px;
+  white-space: normal;
+  text-align: left;
+  min-width: 260px;
 }
 
 details {
