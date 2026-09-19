@@ -39,11 +39,22 @@
           <option value="long">长边翻转（内容旋转 180°）</option>
         </select>
       </div>
+      <div class="field">
+        <label for="paperThickness">纸张厚度（mm）</label>
+        <input id="paperThickness" type="number" min="0" max="100" step="0.01" value="0">
+      </div>
+      <div class="field">
+        <label for="maxCompensation">最大补偿量（mm）</label>
+        <input id="maxCompensation" type="number" min="0" max="100" step="0.1" value="0">
+      </div>
       <div class="field actions">
         <button type="submit">生成拼版</button>
       </div>
     </form>
-    <p class="hint">每帖页数 = 每帖张数 × 4；总页数不足整帖时，自动在末尾补空白页。</p>
+    <p class="hint">
+      每帖页数 = 每帖张数 × 4；总页数不足整帖时，自动在末尾补空白页。
+      纸张厚度与最大补偿量任一为 0（或缺省）时不做爬移补偿；启用后第 i 张（由外向内 i 从 0 起）补偿量 = min(i × 纸张厚度 × 2, 最大补偿量) mm。
+    </p>
     <p class="error" id="errorBox" hidden></p>
   </section>
 

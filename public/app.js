@@ -37,6 +37,8 @@ form.addEventListener('submit', async (event) => {
     sheetsPerSignature: Number(document.getElementById('sheetsPerSignature').value),
     binding: document.getElementById('binding').value,
     flip: document.getElementById('flip').value,
+    paperThickness: Number(document.getElementById('paperThickness').value),
+    maxCompensation: Number(document.getElementById('maxCompensation').value),
   };
 
   try {
@@ -117,14 +119,23 @@ function renderSummary() {
     r.blankPages > 0 ? `自动补空白页 ${r.blankPages} 页` : '无需补白',
     BINDING_TEXT[r.input.binding],
     FLIP_TEXT[r.input.flip],
+    r.creep.enabled
+      ? `爬移补偿：纸厚 ${formatMm(r.input.paperThickness)} mm · 上限 ${formatMm(r.input.maxCompensation)} mm`
+      : '爬移补偿：未启用',
   ];
   summaryBox.innerHTML = '';
   chips.forEach((text, i) => {
     const span = document.createElement('span');
     span.className = 'chip' + (i === 4 && r.blankPages > 0 ? ' warn' : '');
+    if (i === 7) span.className = 'chip' + (r.creep.enabled ? ' creep' : ' creep-off');
     span.textContent = text;
     summaryBox.appendChild(span);
   });
+}
+
+/** mm 数值格式化为两位小数（保留正负号）。 */
+function formatMm(n) {
+  return (Math.round(n * 100) / 100).toFixed(2);
 }
 
 function renderSheetNav() {
@@ -149,9 +160,13 @@ function slotText(slot) {
 
 function renderTable() {
   const r = state.result;
+  const creepOn = r.creep.enabled;
   const flipNote = r.input.flip === 'long'
     ? '背面：左右页位不变，内容旋转 180°'
     : '背面：左右页位互换';
+  const creepNote = creepOn
+    ? `爬移：左页位 ${r.input.binding === 'left' ? '+' : '−'} / 右页位 ${r.input.binding === 'left' ? '−' : '+'}，上限 ${formatMm(r.input.maxCompensation)} mm`
+    : '爬移补偿未启用，offsetMm 均为 0';
   tableBody.innerHTML = '';
   r.signatures.forEach((sig) => {
     sig.sheets.forEach((sheet) => {
@@ -167,12 +182,19 @@ function renderTable() {
         });
         [side.left, side.right].forEach((slot) => {
           const td = document.createElement('td');
-          td.textContent = slotText(slot);
+          const main = document.createElement('div');
+          main.textContent = slotText(slot);
+          if (slot.blank) main.className = 'slot-blank';
+          td.appendChild(main);
+          const off = document.createElement('div');
+          off.className = 'slot-offset' + (creepOn && slot.offsetMm !== 0 ? ' nonzero' : '');
+          off.textContent = `偏移 ${slot.offsetMm > 0 ? '+' : ''}${formatMm(slot.offsetMm)} mm`;
+          td.appendChild(off);
           if (slot.blank) td.className = 'blank';
           tr.appendChild(td);
         });
         const tdNote = document.createElement('td');
-        tdNote.textContent = note;
+        tdNote.textContent = `${note}；${creepNote}`;
         tr.appendChild(tdNote);
         tableBody.appendChild(tr);
       });
@@ -225,8 +247,11 @@ function draw() {
   );
   ctx.font = '14px system-ui, sans-serif';
   ctx.fillStyle = '#5a6b85';
+  const creepSubtitle = r.creep.enabled
+    ? `　爬移补偿：纸厚 ${formatMm(r.input.paperThickness)} mm · 上限 ${formatMm(r.input.maxCompensation)} mm · 本张补偿 ${formatMm(r.creep.sheetCompensationMm[sheet.index - 1])} mm`
+    : '　爬移补偿未启用';
   ctx.fillText(
-    `装订：${BINDING_TEXT[binding]}　双面翻转：${FLIP_TEXT[flip]}　成品 ${r.input.totalPages} 页 · 补白 ${r.blankPages} 页 · 共 ${r.paddedPages} 页`,
+    `装订：${BINDING_TEXT[binding]}　双面翻转：${FLIP_TEXT[flip]}　成品 ${r.input.totalPages} 页 · 补白 ${r.blankPages} 页 · 共 ${r.paddedPages} 页${creepSubtitle}`,
     40, 70
   );
 
@@ -246,10 +271,17 @@ function draw() {
     backRect.x + sheetW / 2, top - 16
   );
 
-  drawSheet(ctx, frontRect, sheet.front, { rotated: false, isBack: false });
-  drawSheet(ctx, backRect, sheet.back, { rotated: flip === 'long', isBack: true });
+  // 爬移像素比例：示意性放大，保证最大补偿量在页位内至少留 18px 边距且不超过页位宽 35%
+  const maxCreepMm = r.creep.enabled ? Math.max(...r.creep.sheetCompensationMm) : 0;
+  const creepPxPerMm = maxCreepMm > 0
+    ? Math.max(1, Math.min(30, (sheetW / 2 * 0.35 - 18) / maxCreepMm))
+    : 0;
+  const drawOpts = { creepPxPerMm, creepEnabled: r.creep.enabled };
+
+  drawSheet(ctx, frontRect, sheet.front, { rotated: false, isBack: false, ...drawOpts });
+  drawSheet(ctx, backRect, sheet.back, { rotated: flip === 'long', isBack: true, ...drawOpts });
   drawFlipDiagram(ctx, { x: 530, y: top, w: 180, h: sheetH }, flip);
-  drawNotes(ctx, r.input);
+  drawNotes(ctx, r.input, r.creep);
 }
 
 /** 绘制一张纸的一面：纸面、裁切角线、左右页位、折线与骑马钉。 */
@@ -296,20 +328,44 @@ function drawSheet(ctx, rect, side, opts) {
   ctx.restore();
 }
 
-/** 绘制一个页位：页码 / 空白斜纹 / 页首方向 / 背面物理关系标注。 */
+/** 绘制一个页位：原始页位虚线框（爬移前）+ 补偿后实线框；页码 / 空白斜纹 / 页首方向 / 背面物理关系标注。 */
 function drawSlot(ctx, rect, slot, opts, posName) {
   const pad = 10;
+
+  // 爬移偏移（屏幕像素）：offsetMm 正 = 向右，负 = 向左
+  let shiftPx = 0;
+  if (opts.creepEnabled && slot.offsetMm) {
+    shiftPx = slot.offsetMm * opts.creepPxPerMm;
+    // 限制在页位内部，避免超出纸面
+    const maxShift = rect.w - pad * 2 - 24;
+    shiftPx = Math.max(-maxShift, Math.min(maxShift, shiftPx));
+  }
+
+  // 原始页位（爬移补偿前）：虚线框，仅在确有偏移时叠加显示
+  if (shiftPx !== 0) {
+    ctx.save();
+    ctx.strokeStyle = '#b0691a';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(rect.x + pad, rect.y + pad, rect.w - pad * 2, rect.h - pad * 2);
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // 补偿后的页位（整体平移 shiftPx 后按原样式绘制）
+  ctx.save();
+  ctx.translate(shiftPx, 0);
+
   const inner = { x: rect.x + pad, y: rect.y + pad, w: rect.w - pad * 2, h: rect.h - pad * 2 };
   const cx = inner.x + inner.w / 2;
   const cy = inner.y + inner.h / 2;
 
-  ctx.save();
-  ctx.strokeStyle = '#c4ccd9';
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = shiftPx !== 0 ? '#e8820c' : '#c4ccd9';
+  ctx.lineWidth = shiftPx !== 0 ? 1.8 : 1;
   ctx.strokeRect(inner.x, inner.y, inner.w, inner.h);
 
   if (slot.blank) {
-    // 空白页：灰色斜纹
+    // 空白页：灰色斜纹（补偿后位置）
     ctx.save();
     ctx.beginPath();
     ctx.rect(inner.x, inner.y, inner.w, inner.h);
@@ -346,9 +402,18 @@ function drawSlot(ctx, rect, slot, opts, posName) {
     ctx.fillText(`第 ${slot.page} 页`, cx, cy + 30);
     ctx.fillStyle = '#94a3b8';
     ctx.font = '11px system-ui, sans-serif';
-    ctx.fillText('▲ 页首', cx, inner.y + 16);
+    ctx.fillText('▲ 页首', cx, inner.y + (shiftPx !== 0 ? 30 : 16));
     ctx.restore();
     ctx.textBaseline = 'alphabetic';
+  }
+
+  // 爬移偏移量标注（补偿后框内顶部）
+  if (shiftPx !== 0) {
+    ctx.fillStyle = '#b0691a';
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    const sign = slot.offsetMm > 0 ? '+' : '';
+    ctx.fillText(`爬移 ${sign}${formatMm(slot.offsetMm)} mm`, cx, inner.y + 14);
   }
 
   // 页位角标
@@ -498,7 +563,7 @@ function drawFlipDiagram(ctx, zone, flip) {
 }
 
 /** 底部图例与规则说明。 */
-function drawNotes(ctx, input) {
+function drawNotes(ctx, input, creep) {
   const lines = [
     '图例：蓝色数字 = 成品页码；灰色斜纹 = 自动补齐的空白页；红色虚线 = 对折线（订口）；灰色小角线 = 裁切标记。',
     input.flip === 'long'
@@ -509,12 +574,23 @@ function drawNotes(ctx, input) {
       : '右装订：第 1 页位于正面左页位，书脊在右。',
     '背面每个页位标注了它物理上位于哪一正面页之背；沿折线对折并配帖装订后，页码首尾相接，阅读顺序连续。',
   ];
+  if (creep && creep.enabled) {
+    lines.push(
+      `爬移补偿：每帖由外向内第 i 张（i 从 0 起）补偿量 = min(i × ${formatMm(input.paperThickness)} mm × 2, ${formatMm(input.maxCompensation)} mm)；画布位移为示意性放大，非真实比例。`,
+      input.binding === 'left'
+        ? '符号约定：左装订时左页位向外侧（+，向右）、右页位向外侧（−，向左）平移；橙色实线框为补偿后页位，橙色虚线框为原始页位。'
+        : '符号约定：右装订时符号整体反转，右页位向外侧（+，向右）、左页位向外侧（−，向左）平移；橙色实线框为补偿后页位，橙色虚线框为原始页位。'
+    );
+  } else {
+    lines.push('爬移补偿未启用（纸张厚度或最大补偿量为 0）：各页位 offsetMm 均为 0，仅显示原始拼版页位。');
+  }
   ctx.save();
   ctx.font = '13px system-ui, sans-serif';
   ctx.textAlign = 'left';
   ctx.fillStyle = '#5a6b85';
   lines.forEach((line, i) => {
-    ctx.fillText(`· ${line}`, 70, 540 + i * 26);
+    if (i === 4) ctx.fillStyle = '#b0691a';
+    ctx.fillText(`· ${line}`, 70, 540 + i * 25);
   });
   ctx.restore();
 }
